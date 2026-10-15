@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garmin-agent-tools"
+version = "0.1.0"
+description = "Direct Garmin Connect tools for a personal agent's own computer"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = ["garminconnect==0.3.2"]
+
+[project.optional-dependencies]
+mcp = ["mcp==1.29.0"]
+
+[project.scripts]
+garmin-agent = "garmin_agent_tools.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
