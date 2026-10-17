@@ -33,4 +33,3 @@ python -m garmin_agent_tools.browser publish-read --run-dir RUN_DIR --request-id
 The original MCP call then completes. Each call needs its own refreshed page observation and
 request; old observations cannot be relabelled as fresh. Unsupported sport/targets
 remain null. Browser reads do not establish API authentication or watch receipt.
-

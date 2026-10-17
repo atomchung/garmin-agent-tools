@@ -69,4 +69,3 @@ claim never redispatches. Exact selected matching can report
 verified; API authentication and watch receipt remain unknown. Partial/uncertain
 effects require read-only reconciliation, never automatic replay. Preserve the
 original claims, queues, outcomes, observations and journals.
-
