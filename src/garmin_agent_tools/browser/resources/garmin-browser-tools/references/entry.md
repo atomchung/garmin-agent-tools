@@ -38,8 +38,7 @@ Stop at login, MFA, CAPTCHA, permission denial or ambiguity. Complete a normal
 private login only within the user's authorization, then start a fresh read;
 never reuse an expired request or pretend old data is fresh.
 
-For the supplied Dot CUA adapter, use the worker and publish-read commands in the
-repository README. For another supported browser, save a private JSON report
+For the supplied Dot CUA adapter, read [the CUA adapter contract](cua.md). For another supported browser, save a private JSON report
 matching `publisher.ParentBrowserObservation` and run:
 
 ```sh
@@ -53,35 +52,27 @@ refreshed_at and observed_at (actual timezone-aware timestamps), name, sport and
 steps. Each step has name, duration_seconds and targets; unread fields are null.
 calendar_evidence, watch_evidence and api_authentication remain unknown for this
 workout-only read. Never copy the proposal or an offline example as observation.
-The parent attests these observations; the recorder cannot independently inspect
+The parent reports these observations; the recorder cannot independently inspect
 a browser, verify identity or prove the page refresh actually occurred.
 
 record-read enforces request/workout IDs, canonical URL, freshness order,
 expiry, selected-field schema and file protection before publishing. It retains
-the parent's report and refuses overwrites. Success is observation_published;
+the parent's report and refuses overwrites. After an interrupted local publication,
+the identical report may complete the same unexpired request; changed reports and
+expired requests remain blocked. No new observation time is generated. Success is observation_published;
 the original MCP client must also finish with observed and isError:false. Other
 results are NOT VERIFIED, not a negative training result. A lost process handle
 is INCONCLUSIVE; inspect retained receipts before considering another operation.
 
 ## Exact test delivery
 
-Run `python -m garmin_agent_tools.browser preview --name 'AGENT MCP BROWSER TEST example' --date YYYY-MM-DD`.
-This saves only a 20-minute running connectivity test, not a training prescription.
-The original DOT-prefixed test names remain accepted. Show the exact saved
-proposal and all effects. Owner confirmation is outside MCP and bound to its
-exact bytes. A Skill invocation, generated hash or automatic continuation is
-not owner approval. The README's exact test delivery section and
-`write_protocol.OwnerConfirmation` own confirmation and account consistency.
-
-Use apply-existing only for that approved preview. A trusted parent uses its own
-supported browser, the pre-write execution claim and matching current own-account
-fingerprint. It creates only the approved new workout and calendar entry, then
-records actual selected workout/calendar evidence with record-observation.
-The existing status pending_parent_cua names that trusted parent-browser handoff;
-it does not install CUA into other hosts. No automatic write selectors are supplied.
-Never automatically repeat an uncertain create/schedule. Repeating apply-existing
-reads retained status without redispatch. browser_observed_scheduled is a matched
-parent-reported UI observation; API authentication and watch receipt stay unknown.
+Read [the packaged delivery contract](delivery.md) for preview, exact owner
+confirmation, account consistency, execution and selected readback. It contains
+the complete workflow and commands; no repository README is required at runtime.
+Use an AGENT-prefixed test name for a host-neutral proposal. Existing DOT-prefixed
+proposals remain valid. The existing status pending_parent_cua names the trusted
+parent-browser handoff; it does not install CUA into other hosts. There are no
+automatic browser write selectors.
 
 ## What leaves the agent computer
 

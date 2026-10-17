@@ -18,7 +18,9 @@ For interpreting training evidence, load the shared reference with
 `python -m garmin_agent_tools.browser training-guidance`. It returns the exact
 text, source revision and SHA256. The reference owns training judgment; this
 Skill owns the connection workflow. The command loads no athlete context or
-current plan. Do not report a proposed plan as persisted by this tool: its state
+current plan. Fields such as `plan.*`, `training_breaks` and `training_history`
+belong to the source coach schema; their absence here is unknown, not a confirmed
+training condition. Do not report a proposed plan as persisted by this tool: its state
 contains connectivity evidence and delivery journals, not a coaching PlanState.
 
 Report observed fields and their observation time, with absent evidence unknown.

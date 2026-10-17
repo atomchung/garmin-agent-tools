@@ -40,7 +40,13 @@ def record_parent_read(run_dir: Path, request_id: str, observation_file: Path) -
         raise ValueError("page_not_refreshed_for_request")
     selected = report.model_dump(exclude={"observed_url", "refreshed_at"})
     validate_response(selected, request)
-    # The complete original report precedes the response. Existing files prevent
-    # overwrites; uncertain publication is reconciled, never relabelled as fresh.
-    atomic_json(directory / "parent-observation.json", report.model_dump())
-    atomic_json(directory / "response.json", selected)
+    # Retain the original before publishing. A local interruption may resume only
+    # the identical validated report while its original request is still valid.
+    # Neither step overwrites evidence or creates a fresh observation timestamp.
+    for path, value in ((directory / "parent-observation.json", report.model_dump()),
+                        (directory / "response.json", selected)):
+        try:
+            atomic_json(path, value)
+        except FileExistsError:
+            if read_private_json(path) != value:
+                raise FileExistsError("different_retained_observation")

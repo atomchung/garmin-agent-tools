@@ -85,6 +85,25 @@ class PortableBrowser(unittest.TestCase):
             self.record({**self.report, "name": "REPLACEMENT"})
         self.assertEqual((self.directory / "response.json").read_bytes(), original)
 
+    def test_interrupted_response_publication_resumes_only_the_identical_report(self):
+        actual = publisher.atomic_json
+        def interrupt(path, value):
+            if path.name == "response.json":
+                raise OSError("SYNTHETIC publication interruption")
+            return actual(path, value)
+        with patch.object(publisher, "atomic_json", side_effect=interrupt):
+            with self.assertRaises(OSError):
+                self.record()
+        original = (self.directory / "parent-observation.json").read_bytes()
+        self.assertFalse((self.directory / "response.json").exists())
+        self.record()
+        self.assertEqual((self.directory / "parent-observation.json").read_bytes(), original)
+        self.assertEqual(r.read_private_json(self.directory / "response.json")["name"], self.report["name"])
+        self.record()
+        with self.assertRaises(FileExistsError):
+            self.record({**self.report, "name": "ALTERED"})
+        self.assertEqual((self.directory / "parent-observation.json").read_bytes(), original)
+
     def test_generic_name_and_old_dot_proposal_remain_valid_without_approval(self):
         state = self.root / "write"
         for name in ["AGENT MCP BROWSER TEST ANONYMOUS", "DOT MCP BROWSER TEST ANONYMOUS"]:
