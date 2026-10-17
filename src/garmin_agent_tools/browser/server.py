@@ -19,11 +19,14 @@ operations connect to Garmin. No public MCP service or personal-computer token
 transfer is required. Native platform registration and VM durability are separate.
 
 read_workout creates one isolated expiring request for a specifically authorized
-positive workout ID. The parent must freshly observe that workout after request
+positive workout ID. The parent uses its own supported browser tool and must freshly observe that workout after request
 creation, then publish only selected fields for the matching request and ID. Stop
 on login, MFA, CAPTCHA, permission denial or ambiguity. Do not infer missing sport,
 targets, durations or evidence from examples. Unknown values remain null/unknown.
-The packaged read worker does not navigate to a calendar or request device sync.
+Dot CUA can use the packaged worker; another host submits its own selected report
+with record-read as documented in the packaged Skill. A report is parent-provided,
+not an independent proof of browser access. The packaged read worker does not
+navigate to a calendar or request device sync.
 
 preview_test saves an exact local fixed 20-minute running connectivity proposal:
 300/600/300 seconds, all NoTarget. Explicit tool-owned name and calendar date are

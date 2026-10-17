@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ROOT = Path(__file__).resolve().parent
 from .state import state_root, ensure_state_root, private_location
 PRIVATE = private_location(os.environ.get("GARMIN_WRITEPREP_RUNTIME", state_root() / "write"))
-PREFIX = "DOT MCP BROWSER TEST "
+PREFIX = "AGENT MCP BROWSER TEST "
 
 
 class ProtocolError(Exception):
@@ -27,7 +27,7 @@ class StrictModel(BaseModel):
 
 
 class PreviewInput(StrictModel):
-    name: str = Field(pattern=r"^DOT MCP BROWSER TEST [A-Za-z0-9][A-Za-z0-9 -]{0,39}$")
+    name: str = Field(pattern=r"^(?:AGENT|DOT) MCP BROWSER TEST [A-Za-z0-9][A-Za-z0-9 -]{0,39}$")
     date: str = Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
     @field_validator("date")

@@ -19,6 +19,12 @@ def main():
     sub.add_parser("serve", help="Official SDK stdio server; no browser controller")
     sub.add_parser("inspect", help="Retrieve actual MCP guidance and catalogue, without calling a tool")
     sub.add_parser("worker-path", help="Print the packaged CUA worker source path")
+    sub.add_parser("skill-path", help="Locate the portable packaged Skill")
+    sub.add_parser("training-guidance", help="Read the shared reference; no athlete data or plan is loaded")
+    parent = sub.add_parser("record-read", help="Trusted parent browser report, outside MCP")
+    parent.add_argument("--run-dir", type=Path, required=True)
+    parent.add_argument("--request-id", required=True)
+    parent.add_argument("--observation-file", type=Path, required=True)
     read = sub.add_parser("read-workout")
     read.add_argument("--workout-id", type=positive_id, required=True)
     preview = sub.add_parser("preview")
@@ -37,7 +43,16 @@ def main():
     args = vars(parser.parse_args())
     mode = args.pop("mode")
     try:
-        if mode == "serve":
+        if mode == "skill-path":
+            print(Path(__file__).with_name("resources") / "garmin-browser-tools" / "SKILL.md")
+        elif mode == "training-guidance":
+            from .guidance import training_reference
+            print(json.dumps(training_reference(), ensure_ascii=False))
+        elif mode == "record-read":
+            from .publisher import record_parent_read
+            record_parent_read(**args)
+            print('{"status":"observation_published","observation_method":"parent_browser_tool"}')
+        elif mode == "serve":
             from .server import run
             run()
         elif mode == "worker-path":
