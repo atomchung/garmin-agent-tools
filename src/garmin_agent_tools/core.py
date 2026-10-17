@@ -14,6 +14,7 @@ import re
 import stat
 import tempfile
 from zoneinfo import ZoneInfo
+from . import __version__
 
 # Upstream failures can contain provider bodies. Never return or log them.
 logging.getLogger('garminconnect').disabled = True
@@ -108,7 +109,7 @@ def account_key(client) -> str:
 
 def doctor() -> dict:
     """Report runtime capability without accessing credentials or making a provider call."""
-    return {'tool_version': '0.1.0', 'python': platform.python_version(), 'system': platform.system(),
+    return {'tool_version': __version__, 'python': platform.python_version(), 'system': platform.system(),
             'garminconnect': importlib.metadata.version('garminconnect'), 'state_home': str(state_home()),
             'credential_file_present': (state_home()/'.env').exists(), 'provider': 'direct-garmin-connect',
             'auth_verified': False}

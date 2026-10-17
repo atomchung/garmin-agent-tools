@@ -31,7 +31,8 @@ def main():
     calendar=sub.add_parser('calendar',help='Read date+workout binding from Garmin')
     calendar.add_argument('--date',required=True)
     calendar.add_argument('--workout-id',required=True,type=int)
-    sub.add_parser('mcp',help='Serve the same bounded tools over stdio (optional mcp dependency)')
+    mcp=sub.add_parser('mcp',help='Serve bounded tools over local stdio')
+    mcp.add_argument('--backend',choices=['api','browser'],default='api')
     args=parser.parse_args()
     try:
         if args.command=='doctor': result=core.doctor()
@@ -51,7 +52,10 @@ def main():
             email=password=None
             result={'authenticated':True,'region':g.client.domain,'workouts_written':False}
         elif args.command=='mcp':
-            from .mcp_server import run
+            if args.backend=='browser':
+                from .browser.server import run
+            else:
+                from .mcp_server import run
             run(); return
         else:
             g=core.authenticated()
