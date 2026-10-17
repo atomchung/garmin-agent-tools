@@ -34,14 +34,16 @@ There is no MCP approve tool. Same-UID file trust is not a human signature.
 
 apply_test queues that existing exact proposal once after checking confirmation.
 A pending queue is not a Garmin write. Before any possible UI mutation, the trusted
-parent must claim execution using the local helper, recheck the owner/account and
-current authorization, then create only the new named test and schedule only that
+parent must claim execution using the local helper and a fresh own-account
+fingerprint matching the outside-MCP confirmation, recheck current authorization,
+then create only the new named test and schedule only that
 workout on the exact date. Stop on duplicate name or ambiguity. Never edit/delete
 existing workouts, send to a device, log in or extract browser cookies/credentials.
 No write selectors or automatic browser write implementation are supplied.
 
-After actual UI readback, the outside-MCP parent may append bounded selected workout
-and calendar observations. Repeating apply reads status without redispatch. Only
+After actual UI readback, the outside-MCP parent may append bounded raw UI workout,
+calendar and account-fingerprint observations. Repeating apply reads status without
+redispatch. Only
 exact matching selected evidence yields browser_observed_scheduled. This means
 agent-reported UI evidence, not independent attestation, API authentication or watch
 receipt. Partial/uncertain writes require read-only reconciliation, never automatic
@@ -92,7 +94,8 @@ async def call_tool(name, arguments):
         if name != "read_workout":
             return error("unknown_tool")
         args = read.ReadInput.model_validate(arguments)
-        # A native stdio host can call the same read tool; no SDK-only run is needed.
+        # The supported SDK caller announces these private manifests. A direct
+        # stdio host needs its own parent dispatcher; this is not a native plugin.
         run = read.create_run()
         request, directory = read.create_request(run, args.workout_id)
         deadline = time.monotonic() + read.MAX_WAIT_SECONDS

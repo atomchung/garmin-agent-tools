@@ -61,7 +61,7 @@ class BrowserBackend(unittest.TestCase):
     def fake_approval(self, preview):
         now = p.now()
         p.save_once(self.root / "write/approvals" / (preview["preview_id"] + ".json"), p.canonical({
-            "schema_version": "owner-confirmation-v1", **self.args(preview),
+            "schema_version": "owner-confirmation-v1", **self.args(preview), "browser_account_key": "a" * 64,
             "name": preview["proposal"]["name"], "date": preview["proposal"]["date"],
             "owner_reply_reference": "ANONYMOUS-TEMPORARY-FIXTURE-NOT-A-HUMAN-APPROVAL",
             "owner_reply_at": p.stamp(now), "recorded_at": p.stamp(now),
@@ -70,6 +70,7 @@ class BrowserBackend(unittest.TestCase):
     def selected(self, preview):
         return {"schema_version": "selected-browser-observation-v1", **self.args(preview),
                 "source_type": "browser_ui", "agent_mediated": True, "observed_at": p.stamp(),
+                "browser_account_key": "a" * 64,
                 "workout": {"workout_id": 12345, "name": preview["proposal"]["name"],
                             "sport": "running", "steps": copy.deepcopy(preview["proposal"]["steps"])},
                 "calendar": {"workout_id": 12345, "date": preview["proposal"]["date"]}}
@@ -110,7 +111,7 @@ class BrowserBackend(unittest.TestCase):
         self.fake_approval(preview)
         pending = self.apply(preview)[-1]["value"]["structuredContent"]
         self.assertEqual(pending["status"], "pending_parent_cua")
-        p.claim_execution(self.root / "write", self.args(preview))
+        p.claim_execution(self.root / "write", self.args(preview), browser_account_key="a" * 64)
         p.record_browser_observation(self.root / "write", self.args(preview), self.selected(preview))
         before = {file: file.read_bytes() for part in ("claims", "queue", "execution", "journal")
                   for file in (self.root / "write" / part).iterdir()}
@@ -128,7 +129,7 @@ class BrowserBackend(unittest.TestCase):
         preview = self.preview()
         self.fake_approval(preview)
         self.apply(preview)
-        p.claim_execution(self.root / "write", self.args(preview))
+        p.claim_execution(self.root / "write", self.args(preview), browser_account_key="a" * 64)
         first = self.selected(preview)
         first["calendar"]["date"] = "2026-10-19"
         second = self.selected(preview)

@@ -8,6 +8,7 @@ import uuid
 from datetime import date as Date, datetime, timezone
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -57,18 +58,19 @@ class OwnerConfirmation(ApplyInput):
     owner_reply_at: str
     recorded_at: str
     expires_at: str
+    browser_account_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class ObservedStep(StrictModel):
-    name: str = Field(max_length=32)
+    name: str = Field(max_length=32, description="Raw visible step label; do not substitute the proposal label.")
     seconds: int = Field(ge=0, le=86400)
-    target: str = Field(max_length=64)
+    target: str = Field(max_length=64, description="Raw visible target label; missing evidence never means NoTarget.")
 
 
 class ObservedWorkout(StrictModel):
     workout_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=128)
-    sport: str = Field(min_length=1, max_length=32)
+    sport: str = Field(min_length=1, max_length=32, description="Raw visible sport label; English Run/Running are compared deterministically.")
     steps: list[ObservedStep] = Field(max_length=16)
 
 
@@ -84,6 +86,7 @@ class BrowserObservation(ApplyInput):
     observed_at: str = Field(max_length=64)
     workout: ObservedWorkout | None = None
     calendar: ObservedCalendar | None = None
+    browser_account_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("agent_mediated", mode="before")
     @classmethod
@@ -114,6 +117,30 @@ def canonical(value):
 
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def account_key_from_profile_url(profile_url):
+    """Fingerprint an already observed OWN View Profile link; never retain it.
+
+    This is parent-reported identity consistency, not authentication or an
+    independent browser attestation. The observed link, not a display name or
+    workout author's profile, must come from the current owner's account menu.
+    """
+    if (type(profile_url) is not str or len(profile_url) > 1024
+            or any(ord(char) <= 32 or ord(char) >= 127 for char in profile_url)):
+        raise ProtocolError("unknown_browser_account")
+    try:
+        url = urlsplit(profile_url)
+        match = re.fullmatch(r"/app/profile/([A-Za-z0-9._~%-]{1,160})/?", url.path)
+        valid = (url.scheme == "https" and url.hostname == "connect.garmin.com"
+                 and url.port in (None, 443) and not url.username and not url.password
+                 and not url.query and not url.fragment and match)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ProtocolError("unknown_browser_account")
+    canonical = "https://connect.garmin.com/app/profile/" + match[1]
+    return digest(("garmin-browser-account-v1\0" + canonical).encode("utf-8"))
 
 
 def private_dir(path):
@@ -221,6 +248,8 @@ def current_confirmation(path, args, body):
         record = OwnerConfirmation.model_validate(read_json(path / "approvals" / (args.preview_id + ".json")))
     except FileNotFoundError:
         return None
+    if record.browser_account_key is None:
+        return None
     binding = {"preview_id": args.preview_id, "proposal_sha256": args.proposal_sha256,
                "name": body["name"], "date": body["date"]}
     if any(getattr(record, key) != value for key, value in binding.items()):
@@ -241,7 +270,7 @@ def journal(path, preview_id, event, data):
 
 def state(path, args):
     result = {"preview_id": args.preview_id, "proposal_sha256": args.proposal_sha256,
-              "external_success": False, "automatic_retry": False}
+              "external_success": False, "automatic_retry": False, "account_identity": "unknown"}
     # Observation receipts are append-only. A later read-only reconciliation may
     # supersede a partial outcome without changing that original outcome/evidence.
     observed = observation_state(path, args)
@@ -316,7 +345,7 @@ def apply_test(path, arguments):
     return {**state(path, args), "queued": True, "redispatched": False}
 
 
-def claim_execution(path, arguments):
+def claim_execution(path, arguments, *, browser_account_key=None):
     """Trusted parent integration, NOT an MCP tool. Call before any UI mutation.
 
     Still performs NO browser/network operation. A claim is consumed forever even
@@ -326,13 +355,16 @@ def claim_execution(path, arguments):
     args = ApplyInput.model_validate(arguments)
     body = load_proposal(path, args)
     queue = read_json(path / "queue" / (args.preview_id + ".json"))
+    confirmation = current_confirmation(path, args, body)
     if (queue["proposal"] != body or queue["proposal_sha256"] != args.proposal_sha256
-            or current_confirmation(path, args, body) is None):
+            or confirmation is None or queue["approval"] != confirmation
+            or browser_account_key != confirmation["browser_account_key"]):
         raise ProtocolError("execution_not_authorized")
     # Verify immutable dispatch evidence exists before claiming execution.
     read_json(path / "claims" / (args.preview_id + ".json"))
     read_json(path / "journal" / (args.preview_id + "-dispatch_claimed.json"))
-    data = {**args.model_dump(), "at": stamp(), "status": "write_may_have_started"}
+    data = {**args.model_dump(), "at": stamp(), "status": "write_may_have_started",
+            "browser_account_key": browser_account_key}
     save_once(path / "execution" / (args.preview_id + ".json"), canonical(data), immutable=True)
     journal(path, args.preview_id, "external_write_intent", data)
     return body
@@ -355,9 +387,12 @@ def record_worker_outcome(path, arguments, status):
 
 def execution_evidence(path, args, body):
     execution = read_json(path / "execution" / (args.preview_id + ".json"))
-    if (set(execution) != {"preview_id", "proposal_sha256", "at", "status"}
+    approval = OwnerConfirmation.model_validate(read_json(path / "queue" / (args.preview_id + ".json"))["approval"])
+    if (set(execution) != {"preview_id", "proposal_sha256", "at", "status", "browser_account_key"}
             or execution["preview_id"] != args.preview_id
             or execution["proposal_sha256"] != args.proposal_sha256
+            or approval.browser_account_key is None
+            or execution["browser_account_key"] != approval.browser_account_key
             or execution["status"] != "write_may_have_started"
             or not (instant(body["created_at"]) <= instant(execution["at"]) <= now())):
         raise ProtocolError("invalid_execution_evidence")
@@ -374,16 +409,33 @@ def classify_observation(args, body, execution, observation, recorded_at):
              and observation.proposal_sha256 == args.proposal_sha256)
     fresh = (instant(body["created_at"]) <= instant(execution["at"]) < observed <= recorded <= now())
     workout, calendar = observation.workout, observation.calendar
-    match = bool(bound and fresh and workout and calendar
-                 and workout.name == body["name"] and workout.sport == body["sport"]
-                 and [step.model_dump() for step in workout.steps] == body["steps"]
+    account_match = (observation.browser_account_key is not None
+                     and observation.browser_account_key == execution["browser_account_key"])
+    match = bool(bound and fresh and account_match and workout and calendar
+                 and workout.name == body["name"]
+                 and {"run": "running", "running": "running"}.get(normalized_label(workout.sport)) == body["sport"]
+                 and normalized_steps(workout.steps) == body["steps"]
                  and calendar.workout_id == workout.workout_id
                  and calendar.date == body["date"])
     return {"status": "browser_observed_scheduled" if match else "uncertain",
             "browser_readback_match": match, "source_type": "browser_ui", "agent_mediated": True,
             "verification": "agent_reported_browser_ui_not_independently_verified",
             "independently_verified": False, "api_authentication": "unknown", "watch": "unknown",
-            "automatic_retry": False, "reconciliation_required": not match}
+            "automatic_retry": False, "reconciliation_required": not match,
+            "account_identity": "matched_parent_reported" if account_match else "unknown_or_mismatched"}
+
+
+def normalized_label(value):
+    return " ".join(value.casefold().split())
+
+
+def normalized_steps(steps):
+    """Compare known English UI labels while preserving raw receipt values."""
+    names = {"warm up": "warmup", "warmup": "warmup", "run": "run",
+             "cool down": "cooldown", "cooldown": "cooldown"}
+    targets = {"no target": "NoTarget", "notarget": "NoTarget"}
+    return [{"name": names.get(normalized_label(step.name)), "seconds": step.seconds,
+             "target": targets.get(normalized_label(step.target))} for step in steps]
 
 
 def record_browser_observation(path, arguments, selected):
@@ -417,7 +469,8 @@ def observation_state(path, args):
         return None
     failed = {"status": "uncertain", "browser_readback_match": False,
               "reconciliation_required": True, "automatic_retry": False,
-              "independently_verified": False, "api_authentication": "unknown", "watch": "unknown"}
+              "independently_verified": False, "api_authentication": "unknown", "watch": "unknown",
+              "account_identity": "unknown"}
     try:
         body = load_proposal(path, args)
         execution = execution_evidence(path, args, body)
@@ -444,6 +497,6 @@ def observation_state(path, args):
         latest = max(receipts, key=lambda item: (instant(item["recorded_at"]), item["receipt_id"]))
         return {key: latest[key] for key in ("status", "browser_readback_match", "source_type",
             "agent_mediated", "verification", "independently_verified", "api_authentication", "watch",
-            "automatic_retry", "reconciliation_required", "receipt_id", "recorded_at")}
+            "automatic_retry", "reconciliation_required", "receipt_id", "recorded_at", "account_identity")}
     except Exception:
         return failed

@@ -1,9 +1,11 @@
 // Load this function once into the already initialized CUA runtime.
 // The parent agent verifies authorization for the request's workout ID and supplies
 // a bound, documented CUA Tab. SDK/server do not launch/control the browser.
-// First attempt: await observeQueuedWorkout(requestReady.value, reusableWorkoutTab).
+// First attempt: await observeQueuedWorkout(requestReady.value, reusableWorkoutTab,
+//   {privateRoot: publicMcpContext.value.browser_home}).
 // If and only if status is browser_not_ready: retry the same request with
-// {navigate:false}; each attempt freshly reads the DOM. Never retry access_denied.
+// {privateRoot: publicMcpContext.value.browser_home, navigate:false}; do not reload
+// on that loading retry. Never retry access_denied.
 // After observation_saved, call the package publish-read command with unchanged run_dir/request_id.
 // It is not acceptable to save offline fixtures as real observations.
 async function observeQueuedWorkout(meta, tab, {privateRoot, navigate = true} = {}) {
@@ -46,9 +48,12 @@ async function observeQueuedWorkout(meta, tab, {privateRoot, navigate = true} = 
   const canonical = 'https://connect.garmin.com/app/workout/' + String(request.workout_id);
   // This is the only navigation target. Access/tool exceptions propagate untouched
   // to the parent (do not log them or try another route).
-  // Reuse the current authorized page when already at the canonical URL.
-  // The evaluate below still reads the DOM freshly after this request exists.
-  if (navigate && await tab.url() !== canonical) await tab.goto(canonical);
+  // Tab.reload is documented by the target CUA API. An initial same-URL read
+  // refreshes the page after request creation; a loading retry only re-reads DOM.
+  if (navigate) {
+    if (await tab.url() === canonical) await tab.reload();
+    else await tab.goto(canonical);
+  }
   const page = new URL(await tab.url());
   if (page.origin !== 'https://connect.garmin.com' || page.pathname !== '/app/workout/' + String(request.workout_id)) {
     return {status:'access_denied_or_wrong_page', request_id:request.request_id};
@@ -98,4 +103,20 @@ async function observeQueuedWorkout(meta, tab, {privateRoot, navigate = true} = 
   try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
   return {status:'observation_saved', request_id:request.request_id,
     run_dir:meta.run_dir, request_dir:directory};
+}
+
+// Pure local fingerprinting of the parent's already observed OWN account-menu
+// View Profile href. This does not read a browser, navigate, approve, or attest it.
+// Keep the href in the CUA runtime; do not print/store it or put it in a command.
+async function accountKeyFromProfileUrl(profileUrl) {
+  if (typeof profileUrl !== 'string' || profileUrl.length > 1024 ||
+      /[\x00-\x20\x7f-\uffff]/.test(profileUrl)) return null;
+  let url;
+  try { url = new URL(profileUrl); } catch { return null; }
+  const match = /^\/app\/profile\/([A-Za-z0-9._~%-]{1,160})\/?$/.exec(url.pathname);
+  if (url.protocol !== 'https:' || url.hostname !== 'connect.garmin.com' ||
+      url.port || url.username || url.password || url.search || url.hash || !match) return null;
+  const canonical = 'https://connect.garmin.com/app/profile/' + match[1];
+  const {createHash} = await import('node:crypto');
+  return createHash('sha256').update('garmin-browser-account-v1\0' + canonical, 'utf8').digest('hex');
 }

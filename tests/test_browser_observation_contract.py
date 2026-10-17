@@ -26,7 +26,7 @@ class NormalFlowTests(unittest.TestCase):
     def fake_approval(self):
         current = p.now()
         p.save_once(self.path / "approvals" / (self.args["preview_id"] + ".json"), p.canonical({
-            "schema_version": "owner-confirmation-v1", **self.args,
+            "schema_version": "owner-confirmation-v1", **self.args, "browser_account_key": "a" * 64,
             "name": self.preview["proposal"]["name"], "date": self.preview["proposal"]["date"],
             "owner_reply_reference": "SYNTHETIC-ANONYMOUS-TEMP-ONLY-NOT-OWNER-APPROVAL",
             "owner_reply_at": p.stamp(current), "recorded_at": p.stamp(current),
@@ -35,11 +35,12 @@ class NormalFlowTests(unittest.TestCase):
     def claim(self):
         self.fake_approval()
         self.assertEqual(p.apply_test(self.path, self.args)["status"], "pending_parent_cua")
-        p.claim_execution(self.path, self.args)
+        p.claim_execution(self.path, self.args, browser_account_key="a" * 64)
 
     def selected(self):
         return {"schema_version": "selected-browser-observation-v1", **self.args,
                 "source_type": "browser_ui", "agent_mediated": True, "observed_at": p.stamp(),
+                "browser_account_key": "a" * 64,
                 "workout": {"workout_id": 123456, "name": self.preview["proposal"]["name"],
                             "sport": "running", "steps": copy.deepcopy(self.preview["proposal"]["steps"])},
                 "calendar": {"workout_id": 123456, "date": self.preview["proposal"]["date"]}}
@@ -69,6 +70,40 @@ class NormalFlowTests(unittest.TestCase):
         self.assertEqual(readback["verification"], "agent_reported_browser_ui_not_independently_verified")
         self.assertNotIn("external_success", readback)
         self.assertFalse(readback["automatic_retry"])
+
+    def test_raw_visible_labels_are_preserved_and_normalized_for_comparison(self):
+        self.claim()
+        selected = self.selected()
+        selected["workout"]["sport"] = "Run"
+        for step, label in zip(selected["workout"]["steps"], ["Warm up", "Run", "Cool down"]):
+            step["name"] = label
+            step["target"] = "No Target"
+        receipt = p.record_browser_observation(self.path, self.args, selected)
+        self.assertEqual(receipt["status"], "browser_observed_scheduled")
+        self.assertEqual(receipt["observation"]["workout"], selected["workout"])
+        self.assertEqual(p.apply_test(self.path, self.args)["account_identity"], "matched_parent_reported")
+        unknown = self.selected()
+        unknown["workout"]["steps"][1]["target"] = "Unspecified"
+        self.assertEqual(p.record_browser_observation(self.path, self.args, unknown)["status"], "uncertain")
+
+    def test_missing_or_different_reported_account_never_matches(self):
+        self.claim()
+        for value in (None, "b" * 64):
+            selected = self.selected()
+            selected["browser_account_key"] = value
+            receipt = p.record_browser_observation(self.path, self.args, selected)
+            self.assertEqual(receipt["status"], "uncertain")
+            self.assertFalse(p.apply_test(self.path, self.args)["browser_readback_match"])
+        self.assertEqual(len(list((self.path / "queue").iterdir())), 1)
+
+    def test_current_account_must_match_before_execution_claim(self):
+        self.fake_approval()
+        p.apply_test(self.path, self.args)
+        for value in (None, "b" * 64):
+            with self.assertRaises(p.ProtocolError):
+                p.claim_execution(self.path, self.args, browser_account_key=value)
+            self.assertEqual(len(list((self.path / "execution").iterdir())), 0)
+        self.assertEqual(p.claim_execution(self.path, self.args, browser_account_key="a" * 64), self.preview["proposal"])
 
     def test_date_target_workout_name_sport_steps_and_missing_mismatches_fail_closed(self):
         self.claim()

@@ -85,11 +85,16 @@ instructions and a `browser_workflow` prompt. `read_snapshot` remains an API-bac
 capability; the browser backend does not provide activity or training-status data.
 
 Use the environment installed from the existing hash lock above. The browser server
-also has a direct entry for an stdio host:
+also exposes its stdio transport for developers:
 
 ```sh
 PYTHONPATH=src .venv/bin/python -m garmin_agent_tools.cli mcp --backend browser
 ```
+
+That command serves the protocol only. A direct host needs its own parent queue
+dispatcher; without it, browser reads time out. It is not an installed native
+plugin. The supported Dot workflow below uses the SDK caller, which announces
+each request to the parent CUA agent.
 
 For a parent agent with command execution and supported CUA, use the SDK caller:
 
@@ -130,7 +135,9 @@ await observeQueuedWorkout(requestReady.value, authorizedGarminTab, {
 });
 ```
 
-This function freshly reads selected visible workout fields. Its selectors reflect
+On its initial attempt, this function navigates to the authorized workout or uses
+the documented `Tab.reload()` when already at that URL, then freshly reads selected
+visible workout fields. Its selectors reflect
 one observed Garmin page version; changed or unsupported UI remains unknown. Only
 `browser_not_ready` allows another fresh read of the same request/page with
 `navigate:false`. Stop on login, CAPTCHA, permission denial or wrong page. Do not
@@ -141,7 +148,7 @@ changing the original identifiers:
 PYTHONPATH=src .venv/bin/python -m garmin_agent_tools.browser publish-read --run-dir RUN_DIR --request-id REQUEST_ID
 ```
 
-The original MCP call then completes. Each call needs a new observed page and
+The original MCP call then completes. Each call needs its own refreshed page observation and
 request; old observations cannot be relabelled as fresh. Unsupported sport/targets
 remain null. Browser reads do not establish API authentication or watch receipt.
 
@@ -162,9 +169,19 @@ Neither the ID nor SHA is approval. Only after an actual current owner reply may
 the trusted operator create a separate private confirmation with the
 `OwnerConfirmation` schema in `browser/write_protocol.py`: schema version, exact
 preview ID/SHA/name/date, verified owner-reply reference and timestamp, record
-timestamp and explicit expiry. Save it exclusively as
+timestamp, explicit expiry and `browser_account_key`. Save it exclusively as
 `approvals/<preview_id>.json`, mode 0600, outside source. The operator must verify
 the real human reply, identity and permission; the file cannot prove those itself.
+The account key is a local SHA256 fingerprint of the current owner's visible
+`View Profile` link in their own `Profile & Account` menu. Do not use a friendly
+display name, the workout author's profile, cookies or hidden state. Use the
+documented `account_key_from_profile_url` helper, or the equivalent pure local
+`accountKeyFromProfileUrl` function loaded with the CUA worker. The observed own
+profile route is `/app/profile/<identifier>`. Keep the href in the CUA runtime;
+do not print, store, or pass it as a literal command argument. Unknown identity
+blocks dispatch; this fingerprint is parent-reported session consistency, not
+independent identity attestation or a claim of stability across future logins.
+It does not change the saved proposal bytes or require another athlete action.
 Same-UID file trust is not a cryptographic human signature. There is no approve
 MCP tool or credential input.
 
@@ -176,17 +193,23 @@ Without a current exact confirmation, this returns `awaiting_owner_confirmation`
 and creates no queue. Otherwise, it creates one durable dispatch claim/journal and
 returns pending. A queue is not a Garmin write. Before any possible browser
 mutation, the trusted parent calls
-`write_protocol.claim_execution(write_protocol.PRIVATE, binding)` outside MCP,
+`write_protocol.claim_execution(write_protocol.PRIVATE, binding, browser_account_key=current_account_key)` outside MCP,
 using the same ID/SHA binding. It must return successfully; a lost/failed result
 means stop and reconcile read-only. Recheck the correct owner account, current
 approval and duplicate-name absence. Use fresh supported UI to create only that
 new workout and schedule only it on the exact date. No write browser selectors or
 automatic browser write controller are included.
 
-After actual workout/calendar readback, the parent saves a private selected JSON
-file matching `BrowserObservation`: proposal binding, `browser_ui`,
+After actual workout/calendar readback, the parent saves a mode 0600 (or 0400)
+private selected JSON with `schema_version: "selected-browser-observation-v1"`
+matching `BrowserObservation`: proposal binding, `browser_ui`,
 `agent_mediated:true`, actual timezone-aware observation timestamp, actual workout
-ID/name/sport/steps/targets, and the matching calendar workout ID/date. Do not copy
+ID/name/raw visible sport/step/target labels, actual seconds, the matching calendar
+workout ID/date, and a fresh own-menu `browser_account_key` matching execution.
+The comparison normalizes only the listed English labels: `Run`/`Running` for
+sport, `Warm up`/`warmup`, `Run`, `Cool down`/`cooldown` for steps, and
+`No Target`/`NoTarget` for targets (case/whitespace insensitive). Original labels
+remain in the private receipt. Unknown labels never imply NoTarget. Do not copy
 the expected proposal as though it were observed. Missing or mismatched evidence
 cannot establish delivery. Then record the observation outside MCP:
 

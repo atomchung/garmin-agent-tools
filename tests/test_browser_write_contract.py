@@ -25,7 +25,7 @@ class WritePreparationTests(unittest.TestCase):
     def fake_approval(self, **changes):
         # Explicitly synthetic operator input in isolated temporary fixture only.
         current = p.now()
-        data = {"schema_version": "owner-confirmation-v1", **self.args,
+        data = {"schema_version": "owner-confirmation-v1", **self.args, "browser_account_key": "a" * 64,
                 "name": self.preview["proposal"]["name"], "date": self.preview["proposal"]["date"],
                 "owner_reply_reference": "ANONYMOUS-MOCK-NOT-REAL-OWNER-REPLY",
                 "owner_reply_at": p.stamp(current), "recorded_at": p.stamp(current),
@@ -53,6 +53,21 @@ class WritePreparationTests(unittest.TestCase):
             self.assertFalse(result["queued"])
         for part in ("approvals", "queue", "claims", "journal"):
             self.assertEqual(self.count(part), 0)
+
+    def test_confirmation_without_account_identity_never_queues(self):
+        self.fake_approval(browser_account_key=None)
+        self.assertEqual(p.apply_test(self.path, self.args)["status"], "awaiting_owner_confirmation")
+        self.assertEqual(self.count("queue"), 0)
+        self.assertEqual(self.count("claims"), 0)
+
+    def test_profile_link_fingerprint_is_bounded_and_not_a_login(self):
+        key = p.account_key_from_profile_url("https://connect.garmin.com/app/profile/ANONYMOUS")
+        self.assertEqual(key, p.account_key_from_profile_url("https://connect.garmin.com:443/app/profile/ANONYMOUS/"))
+        self.assertNotEqual(key, p.account_key_from_profile_url("https://connect.garmin.com/app/profile/ANOTHER-ANONYMOUS"))
+        for value in ("https://example.invalid/app/profile/ANONYMOUS", "https://connect.garmin.com/app/profile/ANONYMOUS?token=FAKE",
+                      "https://user:FAKE@connect.garmin.com/app/profile/ANONYMOUS", "ANONYMOUS", None):
+            with self.assertRaises(p.ProtocolError):
+                p.account_key_from_profile_url(value)
 
     def test_no_self_approval_or_extra_fields(self):
         for extra in ({"approve": True}, {"owner_reply_reference": "yes"}, {"approval_sha256": self.args["proposal_sha256"]}):
@@ -151,19 +166,19 @@ class WritePreparationTests(unittest.TestCase):
     def test_execution_claim_receipt_before_possible_write_and_no_retry(self):
         self.fake_approval()
         p.apply_test(self.path, self.args)
-        body = p.claim_execution(self.path, self.args)
+        body = p.claim_execution(self.path, self.args, browser_account_key="a" * 64)
         self.assertEqual(body, self.preview["proposal"])
         self.assertEqual(self.count("execution"), 1)
         self.assertTrue((self.path / "journal" / (self.args["preview_id"] + "-external_write_intent.json")).exists())
         self.assertEqual(p.apply_test(self.path, self.args)["status"], "uncertain")
         with self.assertRaises(FileExistsError):
-            p.claim_execution(self.path, self.args)
+            p.claim_execution(self.path, self.args, browser_account_key="a" * 64)
         self.assertEqual(self.count("queue"), 1)
 
     def test_partial_and_unknown_never_success(self):
         self.fake_approval()
         p.apply_test(self.path, self.args)
-        p.claim_execution(self.path, self.args)
+        p.claim_execution(self.path, self.args, browser_account_key="a" * 64)
         p.record_worker_outcome(self.path, self.args, "partial")
         result = p.apply_test(self.path, self.args)
         self.assertEqual(result["status"], "partial")
@@ -176,7 +191,7 @@ class WritePreparationTests(unittest.TestCase):
     def test_uncertain_receipt_is_retained(self):
         self.fake_approval()
         p.apply_test(self.path, self.args)
-        p.claim_execution(self.path, self.args)
+        p.claim_execution(self.path, self.args, browser_account_key="a" * 64)
         p.record_worker_outcome(self.path, self.args, "uncertain")
         self.assertEqual(p.apply_test(self.path, self.args)["status"], "uncertain")
         self.assertEqual(self.count("outcomes"), 1)
@@ -186,7 +201,7 @@ class WritePreparationTests(unittest.TestCase):
     def test_tampered_outcome_status_or_binding_never_success(self):
         self.fake_approval()
         p.apply_test(self.path, self.args)
-        p.claim_execution(self.path, self.args)
+        p.claim_execution(self.path, self.args, browser_account_key="a" * 64)
         p.record_worker_outcome(self.path, self.args, "partial")
         path = self.path / "outcomes" / (self.args["preview_id"] + ".json")
         original = p.read_json(path)

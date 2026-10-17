@@ -52,7 +52,7 @@ def main():
             selected = p.read_json(args.pop("observation_file"))
             value = p.record_browser_observation(p.PRIVATE, args, selected)
             keys = ("preview_id", "proposal_sha256", "receipt_id", "status", "browser_readback_match",
-                    "verification", "independently_verified", "api_authentication", "watch")
+                    "verification", "independently_verified", "api_authentication", "watch", "account_identity")
             print(json.dumps({k: value[k] for k in keys}))
         else:
             from .client import invoke
