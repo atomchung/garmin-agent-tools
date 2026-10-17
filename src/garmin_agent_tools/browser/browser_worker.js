@@ -46,7 +46,9 @@ async function observeQueuedWorkout(meta, tab, {privateRoot, navigate = true} = 
   const canonical = 'https://connect.garmin.com/app/workout/' + String(request.workout_id);
   // This is the only navigation target. Access/tool exceptions propagate untouched
   // to the parent (do not log them or try another route).
-  if (navigate) await tab.goto(canonical);
+  // Reuse the current authorized page when already at the canonical URL.
+  // The evaluate below still reads the DOM freshly after this request exists.
+  if (navigate && await tab.url() !== canonical) await tab.goto(canonical);
   const page = new URL(await tab.url());
   if (page.origin !== 'https://connect.garmin.com' || page.pathname !== '/app/workout/' + String(request.workout_id)) {
     return {status:'access_denied_or_wrong_page', request_id:request.request_id};
