@@ -76,6 +76,33 @@ PYTHONPATH=src .venv/bin/python -m garmin_agent_tools.cli mcp
 
 A host may instead call the CLI. Login is intentionally absent from the model-facing MCP tool surface; its inputs never include credentials. Do not assume the host's MCP annotations replace explicit approval or an application-enforced boundary.
 
+## Portable agent entry
+
+The GitHub package includes a [portable Skill](src/garmin_agent_tools/browser/resources/garmin-browser-tools/SKILL.md)
+and [host-neutral browser contract](src/garmin_agent_tools/browser/resources/garmin-browser-tools/references/entry.md).
+Use `python -m garmin_agent_tools.browser skill-path` after installation. The Skill
+can be loaded by a host that supports local skills; this is not a registered
+plugin or marketplace submission. Browser-only agents still need process/file
+access to run local MCP. Another host can submit selected observations with
+`record-read` rather than using Dot's CUA API. Its method is explicitly labelled
+`parent_browser_tool`; request/URL/freshness checks do not independently attest it.
+
+`python -m garmin_agent_tools.browser training-guidance` returns a reviewed
+snapshot of the shared training judgment, source revision and digest. It touches
+no athlete state. This package does not collect full coaching context or store a
+current PlanState; loading a reference is not full Coach Loop integration.
+
+Compatibility evidence: Dot's CUA route has two real selected-workout reads on the
+preceding source version. Generic parent submissions have separate anonymous SDK
+acceptance checks; Grok/Muse/other hosts have not had live acceptance. Do not infer
+compatibility from a product name or claim the new version has provider acceptance
+until the corresponding live check exists.
+
+Garmin browser-session expiry has no guaranteed TTL in this package. Check actual
+login state on each use, preserve journals, and request the platform's normal
+private sign-in only when required. Do not extract cookies or schedule artificial
+keepalive visits. ChatGPT Health support does not establish Dot Health access.
+
 ## Browser-backed local MCP
 
 This alternative uses the agent platform's already authorized Garmin browser

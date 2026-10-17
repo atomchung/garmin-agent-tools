@@ -163,8 +163,18 @@ class BrowserBackend(unittest.TestCase):
                     selected = {"observed_at": p.stamp(), "name": "ANONYMOUS OFFLINE WORKOUT",
                                 "sport": None, "steps": [{"name": "Synthetic", "duration_seconds": 17, "targets": None}],
                                 "calendar_evidence": "unknown", "watch_evidence": "unknown", "api_authentication": "unknown"}
-                    p.save_once(Path(meta["request_dir"]) / "selected-observation.json", p.canonical(selected))
-                    self.call("publish-read", "--run-dir", meta["run_dir"], "--request-id", meta["request_id"])
+                    if iteration == 0:
+                        p.save_once(Path(meta["request_dir"]) / "selected-observation.json", p.canonical(selected))
+                        self.call("publish-read", "--run-dir", meta["run_dir"], "--request-id", meta["request_id"])
+                    else:
+                        report = {**selected, "request_id": meta["request_id"], "workout_id": meta["workout_id"],
+                                  "operation": "read_workout", "observation_method": "parent_browser_tool",
+                                  "observed_url": "https://connect.garmin.com/app/workout/12345",
+                                  "refreshed_at": selected["observed_at"]}
+                        file = Path(self.temp.name) / "anonymous-parent-report.json"
+                        p.save_once(file, p.canonical(report))
+                        self.call("record-read", "--run-dir", meta["run_dir"], "--request-id", meta["request_id"],
+                                  "--observation-file", str(file))
                     _, errors = process.communicate(timeout=12)
                     self.assertEqual(process.returncode, 0, errors)
                 finally:
@@ -174,6 +184,7 @@ class BrowserBackend(unittest.TestCase):
             rows = [json.loads(line) for line in output.read_text().splitlines()]
             self.assert_metadata(rows)
             value = rows[-1]["value"]["structuredContent"]
+            self.assertEqual(value["observation_method"], "cua_repl" if iteration == 0 else "parent_browser_tool")
             self.assertEqual(value["steps"][0]["duration_seconds"], 17)
             self.assertEqual(value["api_authentication"], "unknown")
             self.assertEqual(value["workout_id"], 12345)

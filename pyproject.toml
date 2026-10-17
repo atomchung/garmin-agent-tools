@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "garmin-agent-tools"
-version = "0.1.1"
+version = "0.1.2"
 description = "Direct Garmin Connect tools for a personal agent's own computer"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -20,4 +20,4 @@ garmin-agent = "garmin_agent_tools.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"garmin_agent_tools.browser" = ["browser_worker.js"]
+"garmin_agent_tools.browser" = ["browser_worker.js", "resources/garmin-browser-tools/SKILL.md", "resources/garmin-browser-tools/references/*.md", "resources/garmin-browser-tools/references/*.json"]

@@ -124,7 +124,7 @@ class BrowserResponse(SelectedObservation):
     workout_id: WorkoutId
     source_type: Literal["browser_ui"] = "browser_ui"
     agent_mediated: Literal[True] = True
-    observation_method: Literal["cua_repl"] = "cua_repl"
+    observation_method: Literal["cua_repl", "parent_browser_tool"] = "cua_repl"
 
 
 class ReadResult(BrowserResponse):
