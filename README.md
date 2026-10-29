@@ -95,11 +95,81 @@ from a browser's logged-in session and the unofficial API session used here.
 Garmin's [Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq/)
 states that an access token lasts up to 24 hours or until the key expires,
 whichever comes first. There is no refresh token; a program obtains a new access
-token using the key. This package does **not** yet implement the Personal API
-adapter or accept its key in the login form. Do not paste keys into this form,
-chat, shell arguments, or issues, and do not extract browser cookies. Account
-availability, historical coverage and the exact required metrics still need
-their own acceptance before replacing the current reader.
+token using the key. Do not paste keys into chat, shell arguments, issues, or the
+email/password form, and do not extract browser cookies.
+
+## Official Personal API: local read-only MCP
+
+Use a separate private state directory; the default is
+`~/.local/share/garmin-agent-tools-personal`, configurable with
+`GARMIN_PERSONAL_HOME`. It must be outside the checkout with mode 0700. Key and
+token files are owner-only (0600); neither is a model-facing tool argument.
+
+Start the private Key form on your own computer:
+
+```sh
+PYTHONPATH=src .venv/bin/python -m garmin_agent_tools.cli login-web --backend personal --open-browser
+```
+
+You follow the page's link to Garmin, log in yourself, create a Personal API Key,
+read/accept Garmin's terms yourself, and choose its expiry. Enter that Key only
+in this dedicated private form. The local program exchanges it for a token and
+saves both privately. This is an explicit user step; ordinary website login
+does not automatically pass a token to the program. A private TTY alternative is
+`python -m garmin_agent_tools.cli login-personal` (the Key is hidden input, never
+a command argument). Neither setup command reads activities or writes workouts.
+
+Start the actual local stdio server with the same state directory:
+
+```sh
+PYTHONPATH=src .venv/bin/python -m garmin_agent_tools.cli mcp --backend personal
+```
+
+It advertises only two read-only tools:
+
+- `get_connection_status`: local Key/cache presence and stopped-attempt status;
+  no provider request and no claim that access works now.
+- `read_snapshot(date)`: one explicit `YYYY-MM-DD` Garmin calendar date, activity
+  count and field presence only; never measurement values, account/device IDs,
+  workout creation, calendar writes or watch delivery. Activity queries use both
+  date filters and pagination. An incomplete page set is labelled a lower bound.
+
+This backend does not implement Training Readiness, Training Status or devices;
+those groups say `not_implemented_by_this_backend`, not zero or absent at Garmin.
+Dates follow the observed `startTimeLocal` calendar date. Asia/Taipei is the
+requested timezone for this acceptance, not an independently verified account
+timezone. This reader does not establish full coaching capability.
+
+No endpoint retries on 429/401/403 or changes authentication routes. Such a
+response records a private stop marker; later calls, including new processes,
+make no more provider requests. Only a new explicit private Key setup resets
+that attempt. A still-valid token is reused across processes; an expired token
+can be replaced using the Key before a request, without retrying a failed read.
+Removing local files is not server-side revocation; revoke a Key at Garmin.
+
+Run protocol discovery without provider calls:
+
+```sh
+PYTHONPATH=src .venv/bin/python scripts/check_personal_mcp.py
+```
+
+After the user completes private setup, a deliberately live acceptance reads
+each explicit date once, reporting counts and presence only. Run another fresh
+program for the separate continuity check:
+
+```sh
+PYTHONPATH=src .venv/bin/python scripts/check_personal_mcp.py --live --start-date 2026-10-16 --end-date 2026-10-29
+PYTHONPATH=src .venv/bin/python scripts/check_personal_mcp.py --live --start-date 2026-10-29 --end-date 2026-10-29
+```
+
+For Codex, register the server through
+[`codex mcp add`](https://learn.chatgpt.com/docs/extend/mcp#connect-codex-to-an-mcp-server)
+using your absolute interpreter/module paths and `GARMIN_PERSONAL_HOME` setting.
+Keep credentials in the private files, never in Codex configuration. Point the
+registered server at a fixed installed/source version, not a development branch.
+Registration and protocol discovery do not prove a live Garmin read; preserve
+the real acceptance separately. Personal API authentication and activity paths
+are documented in Garmin's [official example client](https://github.com/garmin/connect-personal-api-python).
 
 
 ## Read and test

@@ -11,6 +11,14 @@ _stage = contextvars.ContextVar('garmin_auth_stage', default=None)
 _install_lock = threading.Lock()
 
 MESSAGES = {
+    'personal_key_required': ('A Garmin Personal API Key has not been configured.',
+                              'Create it yourself on the Garmin website and enter it only in the private local Personal API form; never put it in chat.'),
+    'personal_key_rejected': ('Garmin refused this Personal API Key. This does not establish a password problem.',
+                              'This attempt is stopped. Check the key status and expiry privately on Garmin before explicitly configuring it again.'),
+    'personal_response_invalid': ('Garmin returned an unexpected token or data response.',
+                                  'Stop this attempt; no provider response or credential is disclosed.'),
+    'personal_request_failed': ('The official Personal API request did not complete successfully.',
+                                'Stop this attempt and inspect the local connection status; do not retry automatically.'),
     'rate_limited': ('Garmin limited this request (429). This does not establish whether your password is correct.',
                      'Stop this attempt. Do not retry automatically or switch login routes. Garmin did not provide a verified retry time.'),
     'invalid_credentials': ('Garmin explicitly reported that the username or password does not match.',

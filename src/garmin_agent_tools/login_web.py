@@ -11,9 +11,15 @@ from .core import private_login, state_home
 from .auth import AuthError
 
 
-def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bool = False) -> None:
+def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bool = False, backend: str = 'api') -> None:
     """Serve a same-host, nonce-protected login for the user's private browser takeover."""
-    state_home()
+    if backend == 'personal':
+        from . import personal
+        personal.home()
+    elif backend == 'api':
+        state_home()
+    else:
+        raise ValueError('Unknown login backend')
     nonce=secrets.token_urlsafe(24)
     shared={'stage':'login','diagnosis':None}
     lock=threading.Lock()
@@ -34,7 +40,10 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
 
     def worker(email,password):
         try:
-            private_login(email,password,region,mfa)
+            if backend == 'personal':
+                personal.configure_key(password)
+            else:
+                private_login(email,password,region,mfa)
             stage('success')
         except AuthError as exc:
             stage('failed',exc.report())
@@ -85,14 +94,23 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
             <h1>由你親自連接 Garmin</h1><p>帳密與驗證碼由你輸入；Agent 不需要代填，也不需要看見它們。</p>
             <div class="steps">輸入帳密 → Garmin 驗證／MFA（若需要） → 儲存登入憑證<br>資料讀取與跨程式重用，需要之後分別驗證。</div></header>
             <p class="note">這是非官方工具的本機表單，並非 Garmin 官方登入頁。你的輸入會經過本機程式，再以 HTTPS 送往 Garmin；不傳給工具發布者。本機憑證不是對同權限的電腦管理者加密。請勿把任何憑證貼進對話。</p>'''
+            if backend == 'personal':
+                info='''<header><div class="eyebrow">GARMIN AGENT TOOLS · 官方 PERSONAL API</div><h1>你在 Garmin 登入，工具只接收 Key</h1>
+                <p>先在 Garmin 官網自行登入並建立 Personal API Key，再回到本機頁面交給程式。Agent 不需要看見 Key、密碼或驗證碼。</p>
+                <div class="steps">Garmin 官網登入 → 建立 Key → 本機換取 token → 分別驗證 MCP 讀取與程式重用</div></header>
+                <p class="note">Key 與 token 只存於本機私人資料夾，不送給工具發布者或對話。具有同等電腦權限的程序仍可能讀取它們。此頁不會讀資料、建立課表或寫入行事曆。</p>'''
             hidden=f'<input type="hidden" name="csrf" value="{nonce}">'
             form=f'<form action="{root}" method="post">'+hidden
             if current['stage']=='login':
                 body='<section class="card"><h2>開始本機程式登入</h2>'+form+'<label>Garmin email · 電子郵件<input type="email" name="email" autocomplete="username" required></label><label>Garmin password · 密碼<input type="password" name="password" autocomplete="off" required></label><button type="submit">由我送出登入</button></form><p class="note">遇到限流或拒絕存取會停止，不會自動換路徑重試。</p></section>'
+                if backend == 'personal':
+                    body='<section class="card"><h2>連接官方 Personal API</h2><p><a href="'+personal.KEY_PAGE+'" target="_blank" rel="noreferrer noopener">到 Garmin 官網登入並建立 Key</a></p><p>在 Garmin 選擇 Create Key、閱讀條款並選擇有效期。Key 只顯示一次，請在私人操作中保管。</p>'+form+'<label>Personal API Key<input type="password" name="api_key" autocomplete="off" required></label><button type="submit">由我連接唯讀資料</button></form><p class="note">此動作只向 Garmin 換取 token；遇到 429 或拒絕就停止。若剛遭限流，請先停止，不要反覆送出。</p></section>'
             elif current['stage']=='mfa':
                 body='<section class="card"><h2>Garmin 要求驗證碼</h2><p>請查看 Garmin 發給你的驗證碼，由你在這裡送出。</p>'+form+'<label>Garmin verification code<input type="password" name="otp" autocomplete="one-time-code" required></label><button type="submit">送出驗證碼</button></form></section>'
             elif current['stage']=='success':
                 body='<section class="card success"><h2>登入完成 · Login completed</h2><p>登入憑證已儲存在本機。之後程式使用這份憑證存取 Garmin，不必每次重填密碼。</p><p><strong>資料讀取：尚未驗證。第二個程式重用：尚未驗證。</strong></p><p>你可以關閉此頁並告訴 Agent 登入已完成。這次沒有建立課表、排日曆或推送手錶。</p></section>'
+                if backend == 'personal':
+                    body='<section class="card success"><h2>token 已取得並儲存在本機</h2><p>工具已取得 Garmin 發出的存取憑證。Key 和 token 不會顯示在對話中。</p><p><strong>MCP 資料讀取：尚未驗證。第二個程式重用：尚未驗證。</strong></p><p>請只告訴 Agent「連接完成」，不要貼 Key 或終端內容。</p></section>'
             elif current['stage']=='failed':
                 diagnosis=current['diagnosis'] or AuthError().report()
                 labels={'rate_limited':'Garmin 暫時限制請求（429）','invalid_credentials':'Garmin 回報帳號或密碼不符','access_denied':'Garmin 拒絕這次存取','account_blocked':'Garmin 回報帳號遭鎖定','network_error':'網路連線未完成','authentication_failed':'程式登入未完成，原因未知','mfa_rejected':'Garmin 回報驗證碼不符','mfa_timeout':'等待驗證碼已逾時','credential_override':'目前設定會覆蓋這次登入','storage_error':'本機憑證儲存未完成'}
@@ -107,6 +125,9 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
             <a href="https://connect.garmin.com/" target="_blank" rel="noreferrer noopener">Garmin 官方網站</a>
             <details><summary>想全程在 Garmin 官網登入？</summary><p>官方 Personal API 支援你在 Garmin 網站建立 API Key，再由程式換取 access token。本工具目前的這個表單使用另一套登入方式，尚未接入 Personal API；請勿把 Key 貼進本表單或對話，也不要複製瀏覽器 cookie。</p>
             <a href="https://developer.garmin.com/gc-developer-program/personal/personal-api/" target="_blank" rel="noreferrer noopener">閱讀 Garmin 官方 Personal API 流程</a></details></section>'''
+            help_text=help_text.replace('尚未接入 Personal API；請勿把 Key 貼進本表單或對話，也不要複製瀏覽器 cookie。','另有 --backend personal 的專用 Key 表單；請勿把 Key 貼進帳密表單或對話，也不要複製瀏覽器 cookie。')
+            if backend == 'personal':
+                help_text='<section class="card"><h2>token 是什麼？</h2><p>它是程式存取資料的憑證。Garmin 文件規定最長 24 小時，或 Key 到期為止；程式可用尚有效的 Key 取得下一份 token。這不等於讀取成功，仍需用 MCP 實測。</p><p>本機 Personal MCP 只有讀取與連線狀態兩個工具，不提供課表、日曆或手錶寫入。</p></section>'
             self.send_page(200,head+info+body+help_text+'</main></body></html>')
 
         def do_POST(self):
@@ -126,7 +147,10 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
                 self.send_page(403,'Refused'); return
             with lock:
                 current=shared['stage']
-                if current=='login' and values.get('email') and values.get('password'):
+                if current=='login' and backend=='personal' and values.get('api_key'):
+                    shared['stage']='working'
+                    threading.Thread(target=worker,args=(None,values['api_key'][0]),daemon=True).start()
+                elif current=='login' and backend=='api' and values.get('email') and values.get('password'):
                     shared['stage']='working'
                     threading.Thread(target=worker,args=(values['email'][0],values['password'][0]),daemon=True).start()
                 elif current=='mfa' and values.get('otp') and otp.empty():

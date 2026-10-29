@@ -13,6 +13,7 @@ def main():
     parser=argparse.ArgumentParser(description='Direct Garmin connectivity tools for an agent computer')
     sub=parser.add_subparsers(dest='command',required=True)
     sub.add_parser('doctor',help='Runtime only; does not authenticate')
+    sub.add_parser('login-personal',help='Private terminal entry of a Garmin Personal API Key; never paste it into chat')
     login=sub.add_parser('login',help='Private interactive terminal login; never send credentials in chat')
     login.add_argument('--region',choices=['international','china'],default='international')
     web=sub.add_parser('login-web',help='Private same-computer browser login helper')
@@ -20,8 +21,10 @@ def main():
     web.add_argument('--port',type=int,default=8765)
     web.add_argument('--timeout',type=int,default=600)
     web.add_argument('--open-browser',action='store_true',help='Open the private form in this computer\'s default browser')
+    web.add_argument('--backend',choices=['api','personal'],default='api')
     read=sub.add_parser('snapshot',help='Live selected fields; does not save health data')
     read.add_argument('--date',required=True,help='Explicit YYYY-MM-DD in the athlete timezone')
+    read.add_argument('--backend',choices=['api','personal'],default='api')
     preview=sub.add_parser('test-preview',help='Preview a fixed 5/10/5 minute open-target test')
     preview.add_argument('--tag',required=True)
     preview.add_argument('--date',help='Schedule on this date; omit for template only')
@@ -34,7 +37,7 @@ def main():
     calendar.add_argument('--date',required=True)
     calendar.add_argument('--workout-id',required=True,type=int)
     mcp=sub.add_parser('mcp',help='Serve bounded tools over local stdio')
-    mcp.add_argument('--backend',choices=['api','browser'],default='api')
+    mcp.add_argument('--backend',choices=['api','browser','personal'],default='api')
     args=parser.parse_args()
     try:
         if args.command=='doctor': result=core.doctor()
@@ -42,7 +45,16 @@ def main():
             from .login_web import serve
             if not 1024<=args.port<=65535 or not 30<=args.timeout<=1800:
                 raise core.ToolError('Port or timeout out of range')
-            serve(args.region,args.port,args.timeout,open_browser=args.open_browser); return
+            serve(args.region,args.port,args.timeout,open_browser=args.open_browser,backend=args.backend); return
+        elif args.command=='login-personal':
+            if not sys.stdin.isatty():
+                raise core.ToolError('Personal API Key entry requires a private interactive terminal')
+            from . import personal
+            key=getpass.getpass('Garmin Personal API Key (private): ')
+            try:
+                result=personal.configure_key(key)
+            finally:
+                key=None
         elif args.command=='login':
             if not sys.stdin.isatty():
                 raise core.ToolError('Login requires a private interactive terminal; use login-web for browser takeover')
@@ -53,11 +65,17 @@ def main():
             finally:
                 email=password=None
         elif args.command=='mcp':
+            if args.backend=='personal':
+                from .personal import run_mcp
+                run_mcp(); return
             if args.backend=='browser':
                 from .browser.server import run
             else:
                 from .mcp_server import run
             run(); return
+        elif args.command=='snapshot' and args.backend=='personal':
+            from . import personal
+            result=personal.snapshot(args.date)
         else:
             g=core.authenticated()
             if args.command=='snapshot': result=core.snapshot(g,args.date)
