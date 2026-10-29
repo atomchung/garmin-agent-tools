@@ -15,6 +15,7 @@ import stat
 import tempfile
 from zoneinfo import ZoneInfo
 from . import __version__
+from . import auth
 
 # Upstream failures can contain provider bodies. Never return or log them.
 logging.getLogger('garminconnect').disabled = True
@@ -87,6 +88,65 @@ def save_session(client, region: str) -> None:
     private_write(state_home() / '.env', 'GARMIN_AGENT_SESSION=' + payload + '\n')
 
 
+def private_login(email, password, region, prompt_mfa):
+    """One user-driven login; retain only session tokens and fixed diagnostics."""
+    from garminconnect import Garmin
+    state_home()
+    mfa_requested = False
+    def mfa():
+        nonlocal mfa_requested
+        mfa_requested = True
+        return prompt_mfa()
+    try:
+        if os.environ.get('GARMIN_AGENT_SESSION') or os.environ.get('GARMINTOKENS'):
+            raise auth.AuthError('credential_override')
+        client = Garmin(email=email, password=password, is_cn=region == 'china', prompt_mfa=mfa)
+        auth.login(client)
+        save_session(client, region)
+    except auth.AuthError as exc:
+        report = exc.report()
+        report['mfa_requested'] = mfa_requested
+        _save_login_status(report)
+        raise
+    except OSError:
+        raise auth.AuthError('storage_error') from None
+    report = {'status': 'success', 'stage': 'login', 'code': 'session_saved',
+              'credentials_verified': True, 'mfa_requested': mfa_requested,
+              'data_access_verified': False, 'automatic_retry': False}
+    _save_login_status(report)
+    return report
+
+
+def _save_login_status(report):
+    value = dict(report, recorded_at=dt.datetime.now(dt.timezone.utc).isoformat())
+    try:
+        save_json('last-login.json', value)
+    except (OSError, ToolError):
+        # A diagnostic write must not replace the actual authentication result.
+        pass
+
+
+def last_login_status():
+    """Local history only, never a live check or proof the session still works."""
+    path = state_home() / 'last-login.json'
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(read_private(path))
+        code = data['code']
+        if code not in auth.MESSAGES:
+            return {'status': 'unknown'}
+        result = {'status': 'success' if code == 'session_saved' else 'failed', 'code': code,
+                  'message': auth.MESSAGES[code][0], 'next_step': auth.MESSAGES[code][1],
+                  'is_live_check': False}
+        stamp = dt.datetime.fromisoformat(data['recorded_at'])
+        result['recorded_at'] = stamp.isoformat()
+        result['mfa_requested'] = data.get('mfa_requested') is True
+        return result
+    except (ValueError, KeyError, TypeError, OSError, ToolError):
+        return {'status': 'unknown', 'is_live_check': False}
+
+
 def authenticated():
     """Load credentials from this host only and persist token refreshes privately."""
     from garminconnect import Garmin
@@ -95,7 +155,7 @@ def authenticated():
     if region not in ('international', 'china'):
         raise ToolError('Invalid credential region')
     client = Garmin(is_cn=region == 'china')
-    client.login(json.dumps(data['tokens']))
+    auth.login(client, json.dumps(data['tokens']), reuse=True)
     if not os.environ.get('GARMIN_AGENT_SESSION'):
         save_session(client, region)
     return client
@@ -112,9 +172,10 @@ def doctor() -> dict:
     return {'tool_version': __version__, 'python': platform.python_version(), 'system': platform.system(),
             'garminconnect': importlib.metadata.version('garminconnect'), 'state_home': str(state_home()),
             'credential_file_present': (state_home()/'.env').exists(), 'provider': 'direct-garmin-connect',
-            'auth_verified': False}
+            'auth_verified': False, 'last_login': last_login_status()}
 
 
+@auth.protected('read')
 def snapshot(client, date: str) -> dict:
     """Read selected activity/readiness fields, keeping provider responses out of storage."""
     dt.date.fromisoformat(date)

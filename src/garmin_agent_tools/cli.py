@@ -6,6 +6,7 @@ import getpass
 import json
 import sys
 from . import core
+from . import auth
 
 
 def main():
@@ -18,6 +19,7 @@ def main():
     web.add_argument('--region',choices=['international','china'],default='international')
     web.add_argument('--port',type=int,default=8765)
     web.add_argument('--timeout',type=int,default=600)
+    web.add_argument('--open-browser',action='store_true',help='Open the private form in this computer\'s default browser')
     read=sub.add_parser('snapshot',help='Live selected fields; does not save health data')
     read.add_argument('--date',required=True,help='Explicit YYYY-MM-DD in the athlete timezone')
     preview=sub.add_parser('test-preview',help='Preview a fixed 5/10/5 minute open-target test')
@@ -40,17 +42,16 @@ def main():
             from .login_web import serve
             if not 1024<=args.port<=65535 or not 30<=args.timeout<=1800:
                 raise core.ToolError('Port or timeout out of range')
-            serve(args.region,args.port,args.timeout); return
+            serve(args.region,args.port,args.timeout,open_browser=args.open_browser); return
         elif args.command=='login':
             if not sys.stdin.isatty():
                 raise core.ToolError('Login requires a private interactive terminal; use login-web for browser takeover')
-            from garminconnect import Garmin
             email=input('Garmin email: ').strip()
             password=getpass.getpass('Garmin password: ')
-            g=Garmin(email=email,password=password,is_cn=args.region=='china',prompt_mfa=lambda:getpass.getpass('Garmin verification code: '))
-            g.login(); core.save_session(g,args.region)
-            email=password=None
-            result={'authenticated':True,'region':g.client.domain,'workouts_written':False}
+            try:
+                result=core.private_login(email,password,args.region,lambda:getpass.getpass('Garmin verification code: '))
+            finally:
+                email=password=None
         elif args.command=='mcp':
             if args.backend=='browser':
                 from .browser.server import run
@@ -65,6 +66,9 @@ def main():
             elif args.command=='workout': result=core.readback(g,args.workout_id)
             elif args.command=='calendar': result={'matches':core.calendar_readback(g,args.date,args.workout_id)}
         print(json.dumps(result,ensure_ascii=False,indent=2))
+    except auth.AuthError as exc:
+        print(json.dumps(exc.report(),ensure_ascii=False,indent=2),file=sys.stderr)
+        raise SystemExit(1) from None
     except Exception as exc:
         message=str(exc) if isinstance(exc,core.ToolError) else 'Operation failed; inspect status without printing provider responses or credentials'
         print(json.dumps({'status':'failed','error_type':type(exc).__name__,'message':message}),file=sys.stderr)

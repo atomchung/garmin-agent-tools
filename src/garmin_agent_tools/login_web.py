@@ -7,39 +7,39 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
-from .core import save_session, state_home
+from .core import private_login, state_home
+from .auth import AuthError
 
 
-def serve(region: str, port: int = 8765, timeout: int = 600) -> None:
+def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bool = False) -> None:
     """Serve a same-host, nonce-protected login for the user's private browser takeover."""
-    from garminconnect import Garmin
     state_home()
     nonce=secrets.token_urlsafe(24)
-    shared={'stage':'login','error_type':None}
+    shared={'stage':'login','diagnosis':None}
     lock=threading.Lock()
     otp=queue.Queue(maxsize=1)
     origin=f'http://127.0.0.1:{port}'
     root=f'/{nonce}'
 
-    def stage(value, error_type=None):
+    def stage(value, diagnosis=None):
         with lock:
-            shared.update(stage=value,error_type=error_type)
+            shared.update(stage=value,diagnosis=diagnosis)
 
     def mfa():
         stage('mfa')
         try:
             return otp.get(timeout=min(timeout,300))
         except queue.Empty:
-            raise TimeoutError('Private MFA timed out') from None
+            raise AuthError('mfa_timeout') from None
 
     def worker(email,password):
         try:
-            g=Garmin(email=email,password=password,is_cn=region=='china',prompt_mfa=mfa)
-            g.login()
-            save_session(g,region)
+            private_login(email,password,region,mfa)
             stage('success')
-        except Exception as exc:
-            stage('failed',type(exc).__name__)
+        except AuthError as exc:
+            stage('failed',exc.report())
+        except Exception:
+            stage('failed',AuthError().report())
         finally:
             email=password=None
 
@@ -69,21 +69,45 @@ def serve(region: str, port: int = 8765, timeout: int = 600) -> None:
             with lock:
                 current=dict(shared)
             refresh='<meta http-equiv="refresh" content="2">' if current['stage']=='working' else ''
-            head='<!doctype html><html><head><meta charset="utf-8">'+refresh+'<title>Private Garmin login</title></head><body><main>'
-            info='<h1>Garmin Agent Tools — private login</h1><p>This is an unofficial tool on your agent computer. This form sends your credentials to the local tool, which authenticates directly with Garmin over HTTPS. Nothing is sent to the tool publisher. Tokens are stored privately on this computer; they are not end-to-end encrypted from the agent platform. Do not enter secrets into chat.</p>'
+            style='''<style>
+              *{box-sizing:border-box}body{margin:0;padding:40px 20px;background:#f2f5f6;color:#18313b;font:17px/1.6 system-ui,sans-serif}
+              main{max-width:720px;margin:auto}header{margin-bottom:28px}.eyebrow{font-size:13px;letter-spacing:.12em;color:#506c77}
+              h1{font-size:32px;line-height:1.25;margin:8px 0 12px}h2{font-size:23px;margin-top:0}p{margin:12px 0}
+              .card{background:white;border:1px solid #d6e1e5;border-radius:16px;padding:28px;margin:18px 0}
+              .note{font-size:14px;color:#45616d}label{display:block;margin:18px 0}input{display:block;width:100%;padding:12px;margin-top:6px;border:1px solid #8ca3ae;border-radius:7px;font:inherit}
+              button{background:#165b64;color:white;border:0;border-radius:7px;padding:12px 20px;font:inherit;cursor:pointer}
+              a{color:#145969}.steps{font-size:14px;color:#45616d}.result{border-left:5px solid #b76421}.success{border-left:5px solid #267b5b}
+              details{margin-top:18px}summary{cursor:pointer;font-weight:600}code{overflow-wrap:anywhere;font-size:14px}
+              @media(max-width:480px){body{padding:24px 14px}.card{padding:20px}h1{font-size:28px}}
+            </style>'''
+            head='<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'+refresh+'<title>Private Garmin login</title>'+style+'</head><body><main>'
+            info='''<header><div class="eyebrow">GARMIN AGENT TOOLS · 本機私人登入</div>
+            <h1>由你親自連接 Garmin</h1><p>帳密與驗證碼由你輸入；Agent 不需要代填，也不需要看見它們。</p>
+            <div class="steps">輸入帳密 → Garmin 驗證／MFA（若需要） → 儲存登入憑證<br>資料讀取與跨程式重用，需要之後分別驗證。</div></header>
+            <p class="note">這是非官方工具的本機表單，並非 Garmin 官方登入頁。你的輸入會經過本機程式，再以 HTTPS 送往 Garmin；不傳給工具發布者。本機憑證不是對同權限的電腦管理者加密。請勿把任何憑證貼進對話。</p>'''
             hidden=f'<input type="hidden" name="csrf" value="{nonce}">'
             form=f'<form action="{root}" method="post">'+hidden
             if current['stage']=='login':
-                body=form+'<label>Garmin email <input type="email" name="email" autocomplete="username" required></label><br><label>Garmin password <input type="password" name="password" autocomplete="off" required></label><br><button type="submit">Sign in to Garmin</button></form>'
+                body='<section class="card"><h2>開始本機程式登入</h2>'+form+'<label>Garmin email · 電子郵件<input type="email" name="email" autocomplete="username" required></label><label>Garmin password · 密碼<input type="password" name="password" autocomplete="off" required></label><button type="submit">由我送出登入</button></form><p class="note">遇到限流或拒絕存取會停止，不會自動換路徑重試。</p></section>'
             elif current['stage']=='mfa':
-                body=form+'<label>Garmin verification code <input type="password" name="otp" autocomplete="one-time-code" required></label><button type="submit">Verify</button></form>'
+                body='<section class="card"><h2>Garmin 要求驗證碼</h2><p>請查看 Garmin 發給你的驗證碼，由你在這裡送出。</p>'+form+'<label>Garmin verification code<input type="password" name="otp" autocomplete="one-time-code" required></label><button type="submit">送出驗證碼</button></form></section>'
             elif current['stage']=='success':
-                body='<h2>Login completed</h2><p>The private session was saved. You can close this page and ask your agent to run snapshot. No workout has been written.</p>'
+                body='<section class="card success"><h2>登入完成 · Login completed</h2><p>登入憑證已儲存在本機。之後程式使用這份憑證存取 Garmin，不必每次重填密碼。</p><p><strong>資料讀取：尚未驗證。第二個程式重用：尚未驗證。</strong></p><p>你可以關閉此頁並告訴 Agent 登入已完成。這次沒有建立課表、排日曆或推送手錶。</p></section>'
             elif current['stage']=='failed':
-                body='<h2>Login did not complete</h2><p>Error type: '+html.escape(current['error_type'] or 'unknown')+'</p><p>Restart the helper to try again. No password or provider response is logged.</p>'
+                diagnosis=current['diagnosis'] or AuthError().report()
+                labels={'rate_limited':'Garmin 暫時限制請求（429）','invalid_credentials':'Garmin 回報帳號或密碼不符','access_denied':'Garmin 拒絕這次存取','account_blocked':'Garmin 回報帳號遭鎖定','network_error':'網路連線未完成','authentication_failed':'程式登入未完成，原因未知','mfa_rejected':'Garmin 回報驗證碼不符','mfa_timeout':'等待驗證碼已逾時','credential_override':'目前設定會覆蓋這次登入','storage_error':'本機憑證儲存未完成'}
+                password='Garmin 明確回報帳密不符。' if diagnosis['code']=='invalid_credentials' else '尚無法判斷帳密正誤。'
+                body='<section class="card result"><h2>'+html.escape(labels.get(diagnosis['code'],'登入未完成'))+'</h2><p>'+password+'</p><p>本次嘗試已停止，不會自動重試。</p><p>'+html.escape(diagnosis['message'])+'</p><p>'+html.escape(diagnosis['next_step'])+'</p><details><summary>提供給排查者的安全代碼</summary><code>'+html.escape(diagnosis['code'])+'</code><p class="note">此處不包含帳密、token 或 Garmin 原始回應。</p></details></section>'
             else:
-                body='<h2>Signing in…</h2><p>This page refreshes while the Garmin login is running.</p>'
-            self.send_page(200,head+info+body+'</main></body></html>')
+                body='<section class="card"><h2>正在等待 Garmin 回應…</h2><p>Signing in… 此頁會更新進度，請勿重複送出。自動更新畫面不會重新登入。</p></section>'
+            help_text='''<section class="card"><h2>你可以自行分辨的三件事</h2>
+            <p><strong>官網登入</strong>：你能否在 Garmin 官方網站完成登入。<br><strong>程式登入</strong>：本機工具能否取得並儲存自己的憑證。<br><strong>資料讀取</strong>：程式能否取得你要求的資料。</p>
+            <p>三者分開驗證；官網成功不表示本機程式已連接，429 也不代表密碼錯誤。</p>
+            <p class="note">若剛收到 429 或封鎖訊號，先停止本次嘗試；不要藉其他登入入口連續重試。</p>
+            <a href="https://connect.garmin.com/" target="_blank" rel="noreferrer noopener">Garmin 官方網站</a>
+            <details><summary>想全程在 Garmin 官網登入？</summary><p>官方 Personal API 支援你在 Garmin 網站建立 API Key，再由程式換取 access token。本工具目前的這個表單使用另一套登入方式，尚未接入 Personal API；請勿把 Key 貼進本表單或對話，也不要複製瀏覽器 cookie。</p>
+            <a href="https://developer.garmin.com/gc-developer-program/personal/personal-api/" target="_blank" rel="noreferrer noopener">閱讀 Garmin 官方 Personal API 流程</a></details></section>'''
+            self.send_page(200,head+info+body+help_text+'</main></body></html>')
 
         def do_POST(self):
             if not self.allowed() or self.headers.get('Origin')!=origin or self.headers.get('Content-Type','').split(';')[0]!='application/x-www-form-urlencoded':
@@ -116,6 +140,9 @@ def serve(region: str, port: int = 8765, timeout: int = 600) -> None:
     server.daemon_threads=True
     server.timeout=0.5
     print(origin+root,flush=True)
+    if open_browser:
+        import webbrowser
+        webbrowser.open(origin+root)
     deadline=time.monotonic()+timeout
     try:
         while time.monotonic()<deadline:

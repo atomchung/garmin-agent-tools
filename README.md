@@ -41,11 +41,66 @@ For an agent cloud computer whose browser can access its own loopback network:
 PYTHONPATH=src .venv/bin/python -m garmin_agent_tools.cli login-web
 ```
 
+On your own Mac/Linux desktop, add `--open-browser` to open that private form in
+the default browser. You enter and submit the credentials yourself. The form
+distinguishes waiting for Garmin, an MFA challenge, a saved session, and a failed
+attempt; it never starts a snapshot or a workout operation. It is a local form
+that forwards credentials, not a Garmin-hosted authorization page.
+
 This prints a short-lived `http://127.0.0.1:8765/<random-path>` link. Open it only in the browser on that same agent computer. The athlete must use the platform's private browser sign-in/takeover flow to enter Garmin credentials. The local helper forwards them to Garmin over HTTPS, supports a separate MFA form, and persists only returned tokens. It never returns credential values to the agent. The helper binds only to loopback, checks Host/Origin and a form nonce, disables request logs and caching, and exits after ten minutes. Do not expose it using a public tunnel or proxy. Do not fill its fields through ordinary agent-visible tool arguments. If the platform cannot give the athlete private access to this form, stop: there is no fallback to posting secrets in chat.
 
 Browser-only Garmin sign-in does not authenticate this CLI. The helper is an explicit credential flow on the agent machine, not a browser-cookie extraction tool. If Garmin challenges or refuses the cloud environment, preserve that limitation; do not disable TLS verification or route through the athlete's computer to claim a cloud-only pass.
 
 Use `--region china` only for separate China-region testing; overseas success does not prove China support.
+
+
+### Understand and troubleshoot the result
+
+Website login, program authentication, data reads, and session reuse by another
+process are separate checks. MCP is a tool entry, not an authentication method:
+a browser-backed MCP call can use a logged-in browser, while API-backed MCP uses
+the program's own session. Success on one route does not establish the others.
+
+| Result code | What is known | Your next step |
+| --- | --- | --- |
+| `rate_limited` | HTTP 429 or an explicit provider rate-limit signal; password correctness remains unknown. | Stop. No automatic retry, alternate strategy, or implied cooldown time. |
+| `invalid_credentials` | Garmin explicitly returned a username/password mismatch. | Check credentials privately or use Garmin account recovery. |
+| `access_denied` | Access was refused or a browser challenge was observed; wrong password and account lock are not established. | Stop; do not switch routes to bypass the refusal. |
+| `account_blocked` | An explicit machine-readable lock/suspension signal was returned. | Stop and follow Garmin support instructions. |
+| `network_error` | A transport, TLS, or timeout error interrupted the request. | Check connectivity/service status; password correctness remains unknown. |
+| `mfa_rejected` / `mfa_timeout` | A code was explicitly rejected, or no code arrived before the private form timed out. | This attempt stops; MFA is separate from session persistence and data access. |
+| `credential_override` | Environment credentials could substitute an existing session. | Unset `GARMIN_AGENT_SESSION` and `GARMINTOKENS` privately before a new login. |
+| `session_saved` | The program completed authentication and saved its session. | Verify a read and then session reuse in another process separately. |
+
+CLI errors contain the safe code, stage, explanation and next step. The browser
+shows the same categories and no retry form after a failure. These are fixed
+messages, never raw Garmin responses. Authentication and snapshot requests stop
+on the first denial/rate-limit response before the SDK can try another strategy
+or snapshot endpoint. The dependency pin and hash lock are unchanged.
+
+`doctor` reads `last-login.json` locally without contacting Garmin. Its timestamp
+and result describe that earlier attempt; even `session_saved` does not establish
+that a session still works now. The diagnostic file is owner-only, contains no
+account identifier, password, code, token or health data, and is separate from the
+credential file. No older success is converted into a fresh-login success.
+
+### Garmin website login and official Personal API
+
+The [official Personal API setup](https://developer.garmin.com/gc-developer-program/personal/personal-api/)
+allows you to sign into Garmin Connect yourself, create a Personal API Key, and
+have a program exchange that key for an access token. A token is a credential
+used by a program to access data; protect it like a password. This is different
+from a browser's logged-in session and the unofficial API session used here.
+
+Garmin's [Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq/)
+states that an access token lasts up to 24 hours or until the key expires,
+whichever comes first. There is no refresh token; a program obtains a new access
+token using the key. This package does **not** yet implement the Personal API
+adapter or accept its key in the login form. Do not paste keys into this form,
+chat, shell arguments, or issues, and do not extract browser cookies. Account
+availability, historical coverage and the exact required metrics still need
+their own acceptance before replacing the current reader.
+
 
 ## Read and test
 

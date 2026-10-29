@@ -28,6 +28,34 @@ with patch('garminconnect.Garmin',Fake):
 '''
 
 class PrivateLogin(unittest.TestCase):
+    def test_rate_limit_is_actionable_and_does_not_offer_retry(self):
+        boot=BOOT.replace("assert self.prompt()=='synthetic-code'", "from garmin_agent_tools.auth import AuthError; raise AuthError('rate_limited')")
+        with tempfile.TemporaryDirectory() as directory:
+            sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+            env=dict(os.environ,GARMIN_AGENT_HOME=str(Path(directory).resolve()))
+            proc=subprocess.Popen([sys.executable,'-u','-c',boot,str(port)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            try:
+                url=proc.stdout.readline().strip();nonce=parse.urlsplit(url).path.removeprefix('/')
+                page=request.urlopen(url,timeout=3).read().decode()
+                self.assertIn('這是非官方工具的本機表單',page)
+                self.assertIn('尚未接入 Personal API',page)
+                data=parse.urlencode({'csrf':nonce,'email':'anonymous@example.invalid','password':'synthetic-password'}).encode()
+                req=request.Request(url,data=data,headers={'Origin':f'http://127.0.0.1:{port}','Content-Type':'application/x-www-form-urlencoded'})
+                request.urlopen(req,timeout=3).close()
+                for _ in range(30):
+                    page=request.urlopen(url,timeout=3).read().decode()
+                    if 'rate_limited' in page:break
+                    time.sleep(.03)
+                self.assertIn('rate_limited',page)
+                self.assertIn('尚無法判斷帳密正誤',page)
+                self.assertIn('不會自動重試',page)
+                self.assertNotIn('<form',page)
+                self.assertNotIn('synthetic-password',page)
+                self.assertFalse((Path(directory)/'.env').exists())
+            finally:
+                proc.terminate();proc.wait(timeout=5)
+                proc.stdout.close();proc.stderr.close()
+
     def test_host_origin_nonce_mfa_and_private_storage(self):
         with tempfile.TemporaryDirectory() as directory:
             sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
