@@ -49,7 +49,9 @@ with patch.object(requests.Session,'request',fake):
             proc=subprocess.Popen([sys.executable,'-u','-c',boot,str(port)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
             try:
                 url=proc.stdout.readline().strip();nonce=parse.urlsplit(url).path.removeprefix('/')
-                page=request.urlopen(url,timeout=3).read().decode()
+                with request.urlopen(url,timeout=3) as opened:
+                    self.assertEqual(opened.headers['Referrer-Policy'],'same-origin')
+                    page=opened.read().decode()
                 self.assertIn('你在 Garmin 登入，工具只接收 Key',page)
                 self.assertNotIn('name="password"',page)
                 req=request.Request(url,data=parse.urlencode({'csrf':nonce,'api_key':'synthetic-personal-key'}).encode(),headers={'Origin':f'http://127.0.0.1:{port}','Content-Type':'application/x-www-form-urlencoded'})
@@ -107,9 +109,11 @@ with patch.object(requests.Session,'request',fake):
                 def post(values,site=origin):
                     req=request.Request(url,data=parse.urlencode(values).encode(),headers={'Origin':site,'Content-Type':'application/x-www-form-urlencoded'})
                     return request.urlopen(req,timeout=3).read().decode()
-                with self.assertRaises(error.HTTPError) as caught:
-                    post({'csrf':nonce,'email':'anonymous@example.invalid','password':'synthetic-password'},'https://hostile.invalid')
-                self.assertEqual(caught.exception.code,403)
+                for refused_origin in ('https://hostile.invalid','null'):
+                    with self.assertRaises(error.HTTPError) as caught:
+                        post({'csrf':nonce,'email':'anonymous@example.invalid','password':'synthetic-password'},refused_origin)
+                    self.assertEqual(caught.exception.code,403)
+                    self.assertIn('local_form_refused',caught.exception.read().decode())
                 with self.assertRaises(error.HTTPError) as caught:
                     post({'csrf':'wrong','email':'anonymous@example.invalid','password':'synthetic-password'})
                 self.assertEqual(caught.exception.code,403)

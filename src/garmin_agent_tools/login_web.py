@@ -65,7 +65,9 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
             self.send_header('Content-Type','text/html; charset=utf-8')
             self.send_header('Content-Length',str(len(encoded)))
             self.send_header('Cache-Control','no-store')
-            self.send_header('Referrer-Policy','no-referrer')
+            # no-referrer makes native form POSTs send Origin: null. Preserve
+            # same-origin submissions while omitting referrers to other sites.
+            self.send_header('Referrer-Policy','same-origin')
             self.send_header('X-Frame-Options','DENY')
             self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Content-Security-Policy',"default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; style-src 'unsafe-inline'")
@@ -89,7 +91,8 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
               details{margin-top:18px}summary{cursor:pointer;font-weight:600}code{overflow-wrap:anywhere;font-size:14px}
               @media(max-width:480px){body{padding:24px 14px}.card{padding:20px}h1{font-size:28px}}
             </style>'''
-            head='<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'+refresh+'<title>Private Garmin login</title>'+style+'</head><body><main>'
+            title='Garmin Personal API 連接' if backend=='personal' else 'Private Garmin login'
+            head='<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'+refresh+'<title>'+title+'</title>'+style+'</head><body><main>'
             info='''<header><div class="eyebrow">GARMIN AGENT TOOLS · 本機私人登入</div>
             <h1>由你親自連接 Garmin</h1><p>帳密與驗證碼由你輸入；Agent 不需要代填，也不需要看見它們。</p>
             <div class="steps">輸入帳密 → Garmin 驗證／MFA（若需要） → 儲存登入憑證<br>資料讀取與跨程式重用，需要之後分別驗證。</div></header>
@@ -132,7 +135,7 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
 
         def do_POST(self):
             if not self.allowed() or self.headers.get('Origin')!=origin or self.headers.get('Content-Type','').split(';')[0]!='application/x-www-form-urlencoded':
-                self.send_page(403,'Refused'); return
+                self.send_page(403,'<h1>本機表單拒絕這次送出</h1><p>尚未將這次內容送往 Garmin。請從目前有效的本機設定頁開始。</p><p>安全代碼：local_form_refused</p>'); return
             try:
                 length=int(self.headers.get('Content-Length','0'))
             except ValueError:
@@ -144,7 +147,7 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
             except (ValueError,UnicodeDecodeError):
                 self.send_page(400,'Invalid request'); return
             if not secrets.compare_digest(values.get('csrf',[''])[0],nonce):
-                self.send_page(403,'Refused'); return
+                self.send_page(403,'<h1>本機表單已失效</h1><p>尚未將這次內容送往 Garmin。請重新開啟有效的本機設定頁。</p><p>安全代碼：local_form_expired</p>'); return
             with lock:
                 current=shared['stage']
                 if current=='login' and backend=='personal' and values.get('api_key'):
@@ -158,7 +161,7 @@ def serve(region: str, port: int = 8765, timeout: int = 600, *, open_browser: bo
                     otp.put_nowait(values['otp'][0])
                 else:
                     self.send_page(409,'Login stage changed; reload'); return
-            self.send_response(303); self.send_header('Location',root); self.send_header('Cache-Control','no-store'); self.end_headers()
+            self.send_response(303); self.send_header('Location',root); self.send_header('Content-Length','0'); self.send_header('Cache-Control','no-store'); self.end_headers()
 
     server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     server.daemon_threads=True
