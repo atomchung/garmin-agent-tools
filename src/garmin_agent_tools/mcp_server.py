@@ -1,5 +1,5 @@
 """Optional stdio MCP adapter. Login and credentials are outside the model tool surface."""
-from . import core
+from . import core, auth
 
 
 def run():
@@ -8,6 +8,8 @@ def run():
     server=FastMCP('Garmin Agent Tools',log_level='CRITICAL')
     def safe(fn):
         try: return fn()
+        except auth.AuthError as exc:
+            return exc.report()
         except Exception as exc:
             return {'status':'failed','error_type':type(exc).__name__,
                     'message':str(exc) if isinstance(exc,core.ToolError) else 'Provider operation failed; no raw response disclosed'}
